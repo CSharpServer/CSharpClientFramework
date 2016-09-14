@@ -8,8 +8,7 @@ using System.Net;
 using System.Threading.Tasks;
 using System.ComponentModel;
 using System.Diagnostics;
-using CSharpClientFramework.Client;
-using CSharpClientFramework.Util;
+using CSharpServerFramework.Util;
 
 namespace CSharpClientFramework
 {
@@ -139,7 +138,7 @@ namespace CSharpClientFramework
                 {
                     DispatchSendFailed(ex, "Send Message Failed");
                 }
-            }); 
+            });
 
         }
 
@@ -169,34 +168,30 @@ namespace CSharpClientFramework
                     var received = await Client.Client.ReceiveAsync(buf, SocketFlags.None);
                     DoReveivePackageHead(received);
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-
-
+#if DEBUG
+                    Console.WriteLine("Receive Head Exception:{0}", ex.Message);
+#endif
                 }
             });
-            
+
         }
 
         private void DoReveivePackageHead(int received)
         {
             int len = received;
-            try
+            if (TCP_PACKAGE_HEAD_SIZE == len)
             {
-                if (TCP_PACKAGE_HEAD_SIZE == len)
-                {
-                    int packLen = BitConverter.ToInt32(receiveBuffer, 0);
-                    ///开始接收实际数据包
-                    ReceiveData(packLen);
-                }
-                else
-                {
-                    
-                }
+                int packLen = BitConverter.ToInt32(receiveBuffer, 0);
+                ///开始接收实际数据包
+                ReceiveData(packLen);
             }
-            catch (Exception)
+            else
             {
-                
+#if DEBUG
+                Console.WriteLine("Receive Bad Head Size:{0}", len);
+#endif
             }
         }
 
@@ -210,57 +205,64 @@ namespace CSharpClientFramework
                     var received = await Client.Client.ReceiveAsync(buf, SocketFlags.None);
                     DoClientLoopReceiveCallback(received, PackageLength);
                 }
-                catch (Exception)
+                catch (Exception ex)
                 {
-                    
+#if DEBUG
+                    Console.WriteLine("Receive Data Exception:{0}", ex.Message);
+#endif
                 }
             });
         }
 
-        private void DoClientLoopReceiveCallback(int received,int packLen)
+        private void DoClientLoopReceiveCallback(int received, int packLen)
         {
-            int len = received;
-            try
-            {
-                if (len == packLen)
-                {
-                    try
-                    {
-                        CSharpServerClientBaseMessage msg = MessageDepressor.GetMessageFromBuffer(receiveBuffer, len);
-                        CSharpServerClientEventArgs args = new CSharpServerClientEventArgs();
-                        args.State = msg;
-                        object handlerKey = null;
-                        if (string.IsNullOrWhiteSpace(msg.CommandName))
-                        {
-                            handlerKey = GenerateKey(msg.Extension, msg.CommandId);
-                        }
-                        else
-                        {
-                            handlerKey = GenerateKey(msg.Extension, msg.CommandName);
-                        }
-                        object eventHandler = Events[handlerKey];
-                        EventHandler<CSharpServerClientEventArgs> handler = eventHandler as EventHandler<CSharpServerClientEventArgs>;
-                        if (handler != null)
-                        {
-                            DispatcherEvent(handler, args);
-                        }
-                    }
-                    catch (Exception)
-                    {
+            var receiveBufferCopy = new byte[received];
+            Array.Copy(receiveBuffer, receiveBufferCopy, received);
+            ReceiveHead();
 
-                    }
-                    finally
-                    {
-                        var receiveBufferCopy = new byte[len];
-                        Array.Copy(receiveBuffer, receiveBufferCopy, len);
-                        EventDispatcherUtil.AsyncDispatcherEvent(OnMessageReceived, this, new CSharpServerClientReceiveMessageEventArgs() { ReceiveMessage = receiveBufferCopy });
-                        ReceiveHead();
-                    }
-                }
-            }
-            catch (Exception)
+            if (received == packLen)
             {
+                try
+                {
+                    
+                    CSharpServerClientBaseMessage msg = MessageDepressor.GetMessageFromBuffer(receiveBufferCopy, received);
+                    CSharpServerClientEventArgs args = new CSharpServerClientEventArgs();
+                    args.State = msg;
+                    object handlerKey = null;
+                    if (string.IsNullOrWhiteSpace(msg.CmdName))
+                    {
+                        handlerKey = GenerateKey(msg.ExtName, msg.CmdId);
+                    }
+                    else
+                    {
+                        handlerKey = GenerateKey(msg.ExtName, msg.CmdName);
+                    }
+                    object eventHandler = Events[handlerKey];
+                    EventHandler<CSharpServerClientEventArgs> handler = eventHandler as EventHandler<CSharpServerClientEventArgs>;
+                    if (handler != null)
+                    {
+                        DispatcherEvent(handler, args);
+                    }
+                    EventDispatcherUtil.AsyncDispatcherEvent(OnMessageReceived, this,
+                    new CSharpServerClientReceiveMessageEventArgs()
+                    {
+                        ReceiveMessage = receiveBufferCopy,
+                        Client = this
+                    });
+                }
+                catch (Exception ex)
+                {
+#if DEBUG
+                    Console.WriteLine("MessageDepressor:{0}", ex.Message);
+#endif
+                }
                 
+            }
+            else
+            {
+#if DEBUG
+                Console.WriteLine("Received Data Invalid Length:{0}, Expected:{1}", received, packLen);
+#endif
             }
         }
 
@@ -268,7 +270,10 @@ namespace CSharpClientFramework
         {
             if (OnConnected != null)
             {
-                EventDispatcherUtil.DispatcherEvent(this.OnConnected, this, new CSharpServerClientEventArgs());
+                EventDispatcherUtil.DispatcherEvent(this.OnConnected, this, new CSharpServerClientEventArgs
+                {
+                    Client = this
+                });
             }
         }
 
@@ -276,7 +281,10 @@ namespace CSharpClientFramework
         {
             if(OnDisconnected != null)
             {
-                EventDispatcherUtil.DispatcherEvent(this.OnDisconnected, this, new CSharpServerClientEventArgs());
+                EventDispatcherUtil.DispatcherEvent(this.OnDisconnected, this, new CSharpServerClientEventArgs
+                {
+                    Client = this
+                });
             }
         }
 
@@ -285,15 +293,16 @@ namespace CSharpClientFramework
             object[] param = new object[]
             {
                 this,
-                new CSharpServerClientEventArgs()
+                new CSharpServerClientEventArgs
                 {
-                    State = ex
+                    State = ex,
+                    Client = this
                 }
             };
             var handler = Events["OnSendFailed"];
             if (this.OnSendFailed != null)
             {
-                EventDispatcherUtil.DispatcherEvent(this.OnSendFailed, this, new CSharpServerClientEventArgs());
+                EventDispatcherUtil.DispatcherEvent(this.OnSendFailed, this, new CSharpServerClientEventArgs { Client = this });
             }
         }
 
@@ -330,10 +339,9 @@ namespace CSharpClientFramework
 
     public class CSharpServerClientBaseMessage
     {
-        public string Extension { get; set; }
-        public int CommandId { get; set; }
-        public string CommandName { get; set; }
+        public string ExtName { get; set; }
+        public int CmdId { get; set; }
+        public string CmdName{ get; set; }
     }
 
 }
-

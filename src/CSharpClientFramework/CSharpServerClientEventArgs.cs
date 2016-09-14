@@ -4,7 +4,7 @@ using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
 
-namespace CSharpClientFramework.Client
+namespace CSharpClientFramework
 {
     public class CSharpServerClientEventArgs :EventArgs
     {
@@ -12,6 +12,11 @@ namespace CSharpClientFramework.Client
         /// Event State
         /// </summary>
         public object State { get; set; }
+
+        /// <summary>
+        /// Client
+        /// </summary>
+        public CSharpServerClientBase Client { get; set; }
     }
 
     public class CSharpServerClientReceiveMessageEventArgs : EventArgs
@@ -20,5 +25,10 @@ namespace CSharpClientFramework.Client
         /// Event State
         /// </summary>
         public byte[] ReceiveMessage { get; set; }
+
+        /// <summary>
+        /// Client
+        /// </summary>
+        public CSharpServerClientBase Client { get; set; }
     }
 }
