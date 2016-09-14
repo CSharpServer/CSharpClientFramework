@@ -6,8 +6,6 @@ using System.Net.Sockets;
 using System.Threading;
 using System.Net;
 using System.Threading.Tasks;
-using System.ComponentModel;
-using System.Diagnostics;
 using CSharpServerFramework.Util;
 
 namespace CSharpClientFramework
@@ -17,7 +15,7 @@ namespace CSharpClientFramework
         protected TcpClient Client { get; set; }
         private byte[] receiveBuffer = new byte[16 * 1024];
         private volatile bool _isRunning = false;
-        protected EventHandlerList Events;
+        protected IDictionary<string, EventHandler<CSharpServerClientEventArgs>> Events;
         private readonly int TCP_PACKAGE_HEAD_SIZE = 4;
 
         protected IDictionary<string, object> HandlerKeyMap { get; private set; }
@@ -36,7 +34,7 @@ namespace CSharpClientFramework
 
         private void Init()
         {
-            Events = new EventHandlerList();
+            Events = new Dictionary<string, EventHandler<CSharpServerClientEventArgs>>();
             HandlerKeyMap = new Dictionary<string, object>();
         }
 
@@ -47,23 +45,21 @@ namespace CSharpClientFramework
 
         public void AddHandlerCallback(string ExtensionName, object Command, EventHandler<CSharpServerClientEventArgs> Callback)
         {
-            object key = GenerateKey(ExtensionName, Command);
-            Events.AddHandler(key, Callback);
-        }
-
-        private object GenerateKey(string ExtensionName, object Command)
-        {
-            var cmd = GenerateCmdValue(Command);
-            string key = GenerateCmdKey(ExtensionName, cmd);
-            if (HandlerKeyMap.ContainsKey(key))
+            var key = GenerateKey(ExtensionName, Command);
+            if (Events.ContainsKey(key))
             {
-                return HandlerKeyMap[key];
+                Events[key] += Callback;
             }
             else
             {
-                HandlerKeyMap[key] = key;
+                Events[key] = Callback;
             }
-            return key;
+        }
+
+        private string GenerateKey(string ExtensionName, object Command)
+        {
+            var cmd = GenerateCmdValue(Command);
+            return GenerateCmdKey(ExtensionName, cmd);
         }
 
         private string GenerateCmdKey(string ExtensionName, string cmdValue)
@@ -77,7 +73,7 @@ namespace CSharpClientFramework
             string cmd = null;
             if (Command is int)
             {
-                cmd = string.Format("CmdId({0})", Command);
+                cmd = string.Format("CmdId_{0}", Command);
             }
             else
             {
@@ -226,9 +222,12 @@ namespace CSharpClientFramework
                 {
                     
                     CSharpServerClientBaseMessage msg = MessageDepressor.GetMessageFromBuffer(receiveBufferCopy, received);
-                    CSharpServerClientEventArgs args = new CSharpServerClientEventArgs();
-                    args.State = msg;
-                    object handlerKey = null;
+                    CSharpServerClientEventArgs args = new CSharpServerClientEventArgs
+                    {
+                        State = msg,
+                        Client = this
+                    };
+                    string handlerKey = null;
                     if (string.IsNullOrWhiteSpace(msg.CmdName))
                     {
                         handlerKey = GenerateKey(msg.ExtName, msg.CmdId);
@@ -237,11 +236,10 @@ namespace CSharpClientFramework
                     {
                         handlerKey = GenerateKey(msg.ExtName, msg.CmdName);
                     }
-                    object eventHandler = Events[handlerKey];
-                    EventHandler<CSharpServerClientEventArgs> handler = eventHandler as EventHandler<CSharpServerClientEventArgs>;
-                    if (handler != null)
+                    var eventHandler = Events[handlerKey];
+                    if (eventHandler != null)
                     {
-                        DispatcherEvent(handler, args);
+                        DispatcherEvent(eventHandler, args);
                     }
                     EventDispatcherUtil.AsyncDispatcherEvent(OnMessageReceived, this,
                     new CSharpServerClientReceiveMessageEventArgs()
@@ -324,7 +322,7 @@ namespace CSharpClientFramework
         public void Dispose()
         {
             Close();
-            Events.Dispose();
+            Events.Clear();
         }
 
 
