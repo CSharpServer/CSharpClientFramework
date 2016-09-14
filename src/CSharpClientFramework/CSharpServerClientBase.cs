@@ -96,9 +96,24 @@ namespace CSharpClientFramework
 
         public void Start(IPAddress Ip, int Port)
         {
-            Client = new TcpClient();
+
             _isRunning = false;
-            Client.BeginConnect(Ip, Port, ConnectCallback, Client);
+            Task.Run(async () =>
+            {
+                Client = new TcpClient();
+                try
+                {
+                    await Client.ConnectAsync(Ip, Port);
+                    IsRunning = true;
+                    ReceiveHead();
+                    DispatchClientConnected();
+                }
+                catch (Exception ex)
+                {
+                    DispatchSendFailed(ex, "Remote Server Not Response");
+                    DispatchClientDisconnected();
+                }
+            });
         }
 
 
@@ -109,35 +124,22 @@ namespace CSharpClientFramework
             EventDispatcherUtil.AsyncDispatcherEvent(handler, this, args);
         }
 
-        protected void ConnectCallback(IAsyncResult ar)
-        {
-            try
-            {
-                IsRunning = true;
-                ReceiveHead();
-                DispatchClientConnected();
-            }
-            catch (Exception ex)
-            {
-                DispatchSendFailed(ex, "Remote Server Not Response");
-                DispatchClientDisconnected();
-                return;
-            }
-        }
-
-
         public void SendMessageAsync(byte[] Data, int Length)
         {
-            byte[] sendData = new byte[Data.Length + 4];
-            int len = BitUtil.CreateDataPackageWithHead(sendData, Data, Length);
-            try
+            Task.Run(async () =>
             {
-                Client.Client.BeginSend(sendData, 0, len, SocketFlags.None, OnSendCallback, Client);
-            }
-            catch (Exception ex)
-            {
-                DispatchSendFailed(ex, "Send Message Failed");
-            }
+                byte[] sendData = new byte[Data.Length + 4];
+                int len = BitUtil.CreateDataPackageWithHead(sendData, Data, Length);
+                try
+                {
+                    var buf = new ArraySegment<byte>(sendData, 0, len);
+                    var sended = await Client.Client.SendAsync(buf, SocketFlags.None);
+                }
+                catch (Exception ex)
+                {
+                    DispatchSendFailed(ex, "Send Message Failed");
+                }
+            }); 
 
         }
 
@@ -157,31 +159,30 @@ namespace CSharpClientFramework
 
         }
 
-        protected void OnSendCallback(IAsyncResult ar)
-        {
-            int len = Client.Client.EndSend(ar);
-        }
-
         private void ReceiveHead()
         {
-            try
+            Task.Run(async () =>
             {
-                Client.Client.BeginReceive(receiveBuffer, 0, 4, SocketFlags.None, DoReveivePackageHead, null);
-            }
-            catch (Exception)
-            {
-                
+                try
+                {
+                    var buf = new ArraySegment<byte>(receiveBuffer, 0, 4);
+                    var received = await Client.Client.ReceiveAsync(buf, SocketFlags.None);
+                    DoReveivePackageHead(received);
+                }
+                catch (Exception)
+                {
 
-            }
+
+                }
+            });
+            
         }
 
-        private void DoReveivePackageHead(IAsyncResult ar)
+        private void DoReveivePackageHead(int received)
         {
-            SocketError se = SocketError.TimedOut;
-            int len;
+            int len = received;
             try
             {
-                len = Client.Client.EndReceive(ar, out se);
                 if (TCP_PACKAGE_HEAD_SIZE == len)
                 {
                     int packLen = BitConverter.ToInt32(receiveBuffer, 0);
@@ -201,17 +202,26 @@ namespace CSharpClientFramework
 
         private void ReceiveData(int PackageLength)
         {
-            Client.Client.BeginReceive(receiveBuffer, 0, PackageLength, SocketFlags.None, DoClientLoopReceiveCallback, PackageLength);
+            Task.Run(async () =>
+            {
+                var buf = new ArraySegment<byte>(receiveBuffer, 0, PackageLength);
+                try
+                {
+                    var received = await Client.Client.ReceiveAsync(buf, SocketFlags.None);
+                    DoClientLoopReceiveCallback(received, PackageLength);
+                }
+                catch (Exception)
+                {
+                    
+                }
+            });
         }
 
-        private void DoClientLoopReceiveCallback(IAsyncResult ar)
+        private void DoClientLoopReceiveCallback(int received,int packLen)
         {
-            SocketError se = SocketError.TimedOut;
-            int packLen = (int)ar.AsyncState;
-            int len;
+            int len = received;
             try
             {
-                len = Client.Client.EndReceive(ar, out se);
                 if (len == packLen)
                 {
                     try
@@ -294,7 +304,7 @@ namespace CSharpClientFramework
             {
                 IsRunning = false;
                 DispatchClientDisconnected();
-                Client.Close();
+                Client.Dispose();
             }
         }
 
